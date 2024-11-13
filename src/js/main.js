@@ -1,11 +1,12 @@
-require("dotenv").config();
+require('dotenv').config();
 const maptilerApiKey = process.env.MAPTILER_API_KEY;
 const openRouteServiceApiKey = process.env.OPENROUTESERVICE_API_KEY;
 
+// const polyline = require('@mapbox/polyline');
 // Initialize the MapLibre map
 const map = new maplibregl.Map({
   container: "map",
-  style: "https://api.maptiler.com/maps/bright/style.json?key=" + maptilerApiKey, // Map style URL", // Detailed map style URL
+  style: "https://api.maptiler.com/maps/bright/style.json?key=" + maptilerApiKey + "", // Detailed map style URL
   center: [0, 0], // Starting position [lng, lat]
   zoom: 2, // Starting zoom
 });
@@ -17,6 +18,9 @@ let points = [];
 map.on("click", function (e) {
   points.push([e.lngLat.lng, e.lngLat.lat]);
   new maplibregl.Marker().setLngLat(e.lngLat).addTo(map);
+  if (points.length >= 2) {
+    document.getElementById("find-route").disabled = false;
+  }
 });
 
 // Event listener for the button to find the best route
@@ -24,41 +28,43 @@ document.getElementById("find-route").addEventListener("click", () => {
   fetchRoute(points);
 });
 
-// Function to fetch the route from OpenRouteService
+// Function to fetch the route from OpenRouteService using XMLHttpRequest
 function fetchRoute(points) {
   const apiKey = openRouteServiceApiKey;
-  const url = "https://api.openrouteservice.org/v2/directions/driving-car/json";
-  const body = JSON.stringify({
+  const url = `https://api.openrouteservice.org/v2/directions/driving-car`;
+
+  const requestBody = JSON.stringify({
     coordinates: points,
   });
 
-  fetch(url, {
-    method: "POST",
-    headers: {
-      Accept: "application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8",
-      Authorization: apiKey,
-      "Content-Type": "application/json; charset=utf-8",
-    },
-    body: body,
-  })
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      return response.json();
-    })
-    .then((data) => {
-      console.log(data); // Log the response to inspect the data structure
-      if (data && data.metadata && data.metadata.query && data.metadata.query.coordinates) {
-        const route = data.metadata.query.coordinates;
-        drawRoute(route);
+  var request = new XMLHttpRequest();
+  request.open("POST", url);
+  request.setRequestHeader(
+    "Accept",
+    "application/json, application/geo+json, application/gpx+xml, img/png; charset=utf-8"
+  );
+  request.setRequestHeader("Authorization", apiKey);
+  request.setRequestHeader("Content-Type", "application/json");
+
+  request.onreadystatechange = function () {
+    if (this.readyState === 4) {
+      if (this.status === 200) {
+        const data = JSON.parse(this.responseText);
+        console.log("API Response:", data); // Log the entire response
+        if (data && data.routes && data.routes[0] && data.routes[0].geometry) {
+          const route = polyline.decode(data.routes[0].geometry);
+          console.log("Route Coordinates:", route); // Log route coordinates
+          drawRoute(route);
+        } else {
+          console.error("Invalid data structure in API response");
+        }
       } else {
-        throw new Error("Invalid data structure in API response");
+        console.error("Error fetching route:", this.status);
       }
-    })
-    .catch((error) => {
-      console.error("Error fetching route:", error);
-    });
+    }
+  };
+
+  request.send(requestBody);
 }
 
 // Function to draw the route on the map
@@ -67,7 +73,6 @@ function drawRoute(route) {
     map.removeLayer("route");
     map.removeSource("route");
   }
-
   map.addSource("route", {
     type: "geojson",
     data: {
@@ -75,37 +80,26 @@ function drawRoute(route) {
       properties: {},
       geometry: {
         type: "LineString",
-        coordinates: route,
+        coordinates: route.map((coord) => [coord[1], coord[0]]), // Convert [lat, lng] to [lng, lat]
       },
     },
   });
-
   map.addLayer({
     id: "route",
     type: "line",
     source: "route",
-    layout: {
-      "line-join": "round",
-      "line-cap": "round",
-    },
-    paint: {
-      "line-color": "#ff0000",
-      "line-width": 4,
-    },
+    layout: { "line-join": "round", "line-cap": "round" },
+    paint: { "line-color": "#ff0000", "line-width": 4 },
   });
 
-  // Add labeled markers for each point in the route
-  route.forEach((point, index) => {
-    if (Array.isArray(point) && point.length === 2) {
-      new maplibregl.Marker({
-        element: createLabel(index + 1),
-        anchor: "bottom",
-      })
-        .setLngLat(point)
-        .addTo(map);
-    } else {
-      console.error("Invalid coordinate format:", point);
-    }
+  // Add numbered markers only for the clicked points
+  points.forEach((coord, index) => {
+    new maplibregl.Marker({
+      element: createLabel(index + 1),
+      anchor: "bottom",
+    })
+    .setLngLat(coord)
+    .addTo(map);
   });
 }
 
